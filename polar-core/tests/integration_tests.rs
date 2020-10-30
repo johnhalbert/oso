@@ -269,29 +269,29 @@ fn qvars(p: &mut Polar, query_str: &str, variables: &[&str], expected: Vec<Vec<V
     assert_eq!(vars(p, query_str, variables), expected);
 }
 
+fn _qruntime(p: &mut Polar, query_str: &str) -> ErrorKind {
+    p.new_query(query_str, false)
+        .unwrap()
+        .next_event()
+        .unwrap_err()
+        .kind
+}
+
 macro_rules! qruntime {
-    ($query:expr, $err:pat) => {
-        assert!(matches!(
-            Polar::new()
-                .new_query($query, false)
-                .unwrap()
-                .next_event()
-                .unwrap_err()
-                .kind,
-            ErrorKind::Runtime($err)
-        ));
+    ($query:tt, $err:pat) => {
+        assert!(matches!(_qruntime(&mut Polar::new(), $query), ErrorKind::Runtime($err)));
     };
 
-    ($query:expr, $err:pat, $cond:expr) => {
-        assert!(matches!(
-            Polar::new()
-                .new_query($query, false)
-                .unwrap()
-                .next_event()
-                .unwrap_err()
-                .kind,
-            ErrorKind::Runtime($err) if $cond
-        ));
+    ($query:tt, $err:pat, $cond:expr) => {
+        assert!(matches!(_qruntime(&mut Polar::new(), $query), ErrorKind::Runtime($err) if $cond));
+    };
+
+    ($polar:expr, $query:tt, $err:pat) => {
+        assert!(matches!(_qruntime($polar, $query), ErrorKind::Runtime($err)));
+    };
+
+    ($polar:expr, $query:tt, $err:pat, $cond:expr) => {
+        assert!(matches!(_qruntime($polar, $query), ErrorKind::Runtime($err) if $cond));
     };
 }
 
@@ -1802,5 +1802,21 @@ fn test_list_matches() -> TestResult {
         "xs",
         vec![value!([3, Value::RestVariable(Symbol::new("ys"))])],
     );
+    Ok(())
+}
+
+#[test]
+fn error_on_binding_expressions_and_patterns_to_variables() -> TestResult {
+    qruntime!("x = (1 and 2)", RuntimeError::TypeError { msg: m, .. }, m == "cannot bind expression '1 and 2' to 'x'");
+    qruntime!("x = (not x)", RuntimeError::TypeError { msg: m, .. }, m == "cannot bind expression 'not x' to 'x'");
+    qruntime!("x = y matches z", RuntimeError::TypeError { msg: m, .. }, m == "cannot bind expression 'y matches z' to 'x'");
+    qruntime!("x matches y", RuntimeError::TypeError { msg: m, .. }, m == "cannot bind pattern 'y' to 'x'");
+    let mut p = Polar::new();
+    p.load_str(
+        r#"f(x: y) if x = 1;
+           g(x: {}) if x = 1;"#,
+    )?;
+    qruntime!(&mut p, "f(x)", RuntimeError::TypeError { msg: m, .. }, m == "cannot bind pattern 'y' to '_x_1'");
+    qruntime!(&mut p, "g(x)", RuntimeError::TypeError { msg: m, .. }, m == "cannot bind pattern '{}' to '_x_2'");
     Ok(())
 }
